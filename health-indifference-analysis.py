@@ -176,6 +176,132 @@ sns.set_style("whitegrid")
 #from google.colab import files
 #uploaded = files.upload()
 
+import pandas as pd
+import numpy as np
+from scipy.stats import chi2
+import math
+import warnings
+
+# Handling DeprecationWarning:
+#   - 'ignore'  silences the warning
+#   - 'error'   raises it as an exception (recommended for debugging)
+warnings.simplefilter("ignore", category=DeprecationWarning)
+
+#  p-value formatter
+def format_p(p_val: float, digits: int = 3, sci_threshold: float = 1e-6) -> str:
+    """
+    Utility that formats a p-value string according to publication style
+    - If p < .001, returns 'p < .001'
+    - If p is below sci_threshold, returns scientific notation, e.g. 'p = 3.2e-07'
+    - Otherwise rounds to the specified number of decimal places
+    """
+    if p_val < 0.001:
+        if p_val < sci_threshold:
+            return f"p = {p_val:.1e}"
+        else:
+            return "p < .001"
+    return f"p = {p_val:.{digits}f}"
+
+#  Little's MCAR test function
+def little_mcar_test(
+    df: pd.DataFrame,
+    max_vars: int = 50,
+    min_pattern_size: int = 2
+):
+    """
+    Little's MCAR χ² test (equivalent to BaylorEdPsych::LittleMCAR)
+
+    Parameters
+    ----------
+    df : pandas.DataFrame
+        Original data frame
+    max_vars : int, default 50
+        Upper limit on the number of columns used, to reduce computation
+    min_pattern_size : int, default 2
+        Ignore very rare missing-data patterns (< min_pattern_size rows)
+
+    Returns
+    -------
+    chi2_total : float
+    df_total   : int
+    p_value    : float
+    """
+    work = pd.DataFrame(index=df.index)
+
+    # Numeric columns → unchanged
+    # Non-numeric columns → category codes (missing as NaN)
+    for col in df.columns[:max_vars]:
+        s = df[col]
+        if np.issubdtype(s.dtype, np.number):
+            work[col] = s
+        else:
+            work[col] = s.astype("category").cat.codes.replace(-1, np.nan)
+
+    p = work.shape[1]
+    mu = work.mean(skipna=True)
+    Sigma = work.cov()
+
+    chi2_total, df_total = 0.0, 0
+
+    patterns = work.isna().apply(tuple, axis=1)
+    for pat, idx in patterns.groupby(patterns).groups.items():
+        if len(idx) < min_pattern_size:
+            continue
+        observed_cols = [i for i, m in enumerate(pat) if not m]
+        if not observed_cols:             # Skip rows that are all missing
+            continue
+
+        cols = work.columns[observed_cols]
+        sub = work.loc[idx, cols]
+        mu_r = sub.mean()
+        Sigma_r = Sigma.loc[cols, cols].to_numpy()
+
+        # Moore–Penrose pseudo-inverse for singular covariance matrices
+        Sigma_inv = np.linalg.pinv(Sigma_r)
+        diff = (mu_r - mu[cols]).to_numpy().reshape(-1, 1)
+
+        # Explicitly convert 0-D ndarray to scalar to avoid DeprecationWarning
+        quadform = float((diff.T @ Sigma_inv @ diff).item())
+        chi2_total += len(idx) * quadform
+        df_total += len(cols)
+
+    df_total -= p
+    p_value = 1 - chi2.cdf(chi2_total, df_total)
+    return chi2_total, df_total, p_value
+
+#  Load data & perform the test
+csv_path = "/content/Jastis_Analysis2.csv"  # change path as needed
+df = pd.read_csv(csv_path)
+
+chi2_stat, dof_stat, p_stat = little_mcar_test(df, max_vars=50)
+
+print("Little's MCAR test:")
+print(f"  χ² = {chi2_stat:,.1f}")
+print(f"  df  = {dof_stat}")
+print(f"  {format_p(p_stat)}")
+
+#  Sample-size recalculation (RR = 0.80)
+alpha   = 0.05
+power   = 0.80
+Z_alpha = 1.96   # two-sided
+Z_beta  = 0.84   # 80 % power
+
+p0 = 0.05        # Hospitalisation rate in low-indifference group
+RR = 0.80
+p1 = RR * p0
+
+p_bar = (p0 + p1) / 2
+numer = (Z_alpha * math.sqrt(2 * p_bar * (1 - p_bar)) +
+         Z_beta  * math.sqrt(p0 * (1 - p0) + p1 * (1 - p1))) ** 2
+denom = (p0 - p1) ** 2
+
+n_per_group = math.ceil(numer / denom)
+total_n = n_per_group * 2
+
+print("\nSample size (RR = 0.80):")
+print(f"  per group : {n_per_group:,}")
+print(f"  total     : {total_n:,}")
+
 # ========================================
 # 3. Data Validation and Memory Optimization
 # ========================================
