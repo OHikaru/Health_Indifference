@@ -1,30 +1,31 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
+
 """
-JASTIS Health Indifference Analysis - Final Revised Version (Hyperparameter Optimized Version)
+JASTIS Health Indifference Analysis - Final Revised Version (Hyperparameter Optimized)
 - Data source: /content/2021_row.csv, /content/2022_row.csv, /content/2023_row.csv
 - Main analysis: modified Poisson (log link, robust SE) + stabilized IPCW
-- Causal discovery: gCastle/DAGMA compatible (when available) + prior knowledge constraints
-- Improvements: GOLEM EV→NV two-stage execution, CORL dag_mask addition
+- Causal discovery: gCastle/DAGMA compatible (if available) + prior knowledge constraints
+- Improvements: GOLEM EV→NV two-stage execution, CORL dag_mask added
 """
 
 # ===== Hyperparameter Settings (Optimized Version) =====
 CAUSAL_PARAMS = {
-    "DirectLiNGAM": { #Executes instantly
-        "thresh": 0.01,            # threshold. Keep current: Good balance between detection power and false positives
+    "DirectLiNGAM": { #Execution instant
+        "thresh": 0.03,            # threshold. 0.01: Good balance between detection power and false positives
         "measure": "pwling",
         "prior_knowledge": None    # Set dynamically at runtime
     },
     
-    "GOLEM": { #Execution time about 20min/5Fold
+    "GOLEM": {                     #Execution time 10-20min/5Fold approximately
         "lambda_1": 2e-3,          # Recommended range for NV
         "lambda_2": 5.0,           # Recommended value
         "learning_rate": 1e-3,     # Recommended value
-        "num_iter": 100000,        # Recommended value (realistic for A100) #100000
-        "checkpoint_iter": 5000,   # Intermediate log
-        "graph_thres": 0.1,        # threshold. Default value (suppress unnecessary edges)
-        "equal_variances": True    # Prioritize convergence with EV first
+        "num_iter": 100000,        # Recommended value (realistic with A100) #100000
+        "checkpoint_iter": 5000,   # Intermediate logging
+        "graph_thres": 0.001,        # threshold. Default value (suppress unnecessary edges)
+        "equal_variances": True    # True if prioritizing convergence with EV
     },
     
     "GOLEM_CONSTRAINTS": {
@@ -35,34 +36,34 @@ CAUSAL_PARAMS = {
         "use_two_stage": True      # Enable EV→NV two-stage execution
     },
     
-    "CORL": { #Execution time per fold
-        "batch_size": 64,              # Must be at least n_nodes
-        "input_dim": 100,              # Feature dimension
-        "embed_dim": 256,              # Expand embedding dimension
+    "CORL": { #Execution time/fold approximately
+        "batch_size": 32,              # Must be at least n_nodes
+        "input_dim": 64,              # Feature dimension
+        "embed_dim": 128,              # Expand embedding dimension
         "encoder_name": "transformer",
-        "encoder_heads": 8,            # Increase number of heads
-        "encoder_blocks": 3,           # Increase number of blocks
+        "encoder_heads": 4,            # Increase number of heads
+        "encoder_blocks": 4,           # Increase number of blocks
         "encoder_dropout_rate": 0.1,   # Adjust dropout rate
         "decoder_name": "lstm",
         "reward_mode": "episodic",
         "reward_score_type": "BIC",    # Changed to BIC (improved stability)
         "reward_regression_type": "LR",
         "lambda_iter_num": 500,        # Score update interval
-        "actor_lr": 1e-4,              # Lower learning rate
-        "critic_lr": 1e-3,             # Lower learning rate
-        "iteration": 1000,            # Significantly increased #1000
-        "use_float64": False,
-        "use_dag_mask": True,           # Use dag_mask
+        "actor_lr": 1e-5,              # Lower learning rate
+        "critic_lr": 1e-4,             # Lower learning rate
+        "iteration": 1000,              # Significantly increased #1000
+        "use_float64": True,           # Must be True to avoid double/float mismatch error
+        "use_dag_mask": True,          # Use dag_mask
         "edge_threshold": 1e-4         # Edge extraction threshold (added)              
     },
     
-    "DAGMA": {
+    "DAGMA": {                         # 20min/fold approximately
         "dims": [None, 10, 1],         # Input dimension set at runtime
         "bias": True,
         "lambda1": 2e-2,               # Paper/API default
         "lambda2": 5e-3,               # Paper/API default
-        "lr": 2e-4,                    # Paper/API default
-        "w_threshold": 0.3,            # threshold. Auto-prune small edges
+        "lr": 2e-5,                    # Paper/API default
+        "w_threshold": 0.03,            # threshold. Auto-prune small edges
         "T": 4,
         "mu_init": 0.1,
         "mu_factor": 0.1,
@@ -110,7 +111,7 @@ from patsy import dmatrix
 
 import networkx as nx
 
-# torch (when available)
+# torch (if available)
 try:
     import torch
     TORCH_AVAILABLE = True
@@ -119,7 +120,7 @@ except:
     TORCH_AVAILABLE = False
     device = None
 
-# gCastle (when available)
+# gCastle (if available)
 try:
     import castle
     from castle.algorithms import DirectLiNGAM, GOLEM, CORL
@@ -127,7 +128,7 @@ try:
 except:
     GCASTLE_AVAILABLE = False
 
-# DAGMA (when available)
+# DAGMA (if available)
 try:
     import dagma
     from dagma.nonlinear import DagmaMLP, DagmaNonlinear
@@ -145,10 +146,19 @@ if not logger.handlers:
     logger.addHandler(ch)
 
 # ===== Paths =====
-DATA_2021 = "/content/2021_row.csv"
-DATA_2022 = "/content/2022_row.csv"
-DATA_2023 = "/content/2023_row.csv"
-OUT_DIR = "./jastis_outputs"
+# Specify folder 
+DRIVE_FOLDER = "" 
+
+# Data file paths
+DATA_2021 = f"{DRIVE_FOLDER}/2021_row.csv"
+DATA_2022 = f"{DRIVE_FOLDER}/2022_row.csv"
+DATA_2023 = f"{DRIVE_FOLDER}/2023_row.csv"
+
+# Output destination also set to same folder
+OUT_DIR = DRIVE_FOLDER
+
+# Create folder if it doesn't exist
+import os
 os.makedirs(OUT_DIR, exist_ok=True)
 
 # ====== 1) Data Loading ======
@@ -332,7 +342,7 @@ def build_outcomes_2023(df23: pd.DataFrame) -> pd.DataFrame:
     else:
         out["HospitalizationPastYear_23"] = np.nan
 
-    # COVID infection (Q23.*-1 where 1-3=infected, if any)
+    # COVID infection (Q23.*-1 with 1-3=infected, any positive = 1)
     INFECTION_TRIGGER_COLS = [
         "Q23.1-1","Q23.2-1","Q23.3-1","Q23.4-1","Q23.5-1",
         "Q23.6-1","Q23.7-1","Q23.8-1","Q23.9-1","Q23.10-1"
@@ -351,7 +361,7 @@ def build_outcomes_2023(df23: pd.DataFrame) -> pd.DataFrame:
         all_missing_rows = int(vals.notna().any(axis=1).eq(False).sum())
         logger.info(f"[COVID] triggers={len(trigger_cols)}/10, pos={n1}, neg={n0}, NaN={n_na}, all-missing(-1)={all_missing_rows}")
 
-    # COVID vaccination
+    # COVID vaccine
     covid_vac_col = find_column(d, ["Q20", "q20"])
     if covid_vac_col:
         val = pd.to_numeric(d[covid_vac_col], errors="coerce")
@@ -361,7 +371,7 @@ def build_outcomes_2023(df23: pd.DataFrame) -> pd.DataFrame:
     else:
         out["COVID19_Vaccination_23"] = np.nan
 
-    # Influenza vaccination
+    # Influenza vaccine
     flu_col = find_column(d, ["Q37.10", "Q37_10"])
     if flu_col:
         out["InfluenzaVaccination_23"] = pd.to_numeric(d[flu_col], errors="coerce").apply(
@@ -493,7 +503,7 @@ def multiple_impute_covars(panel: pd.DataFrame, m: int = 5, random_state: int = 
         imputed_list.append(d)
     return imputed_list
 
-# ====== 9) modified Poisson ======
+# ====== 9) Modified Poisson ======
 def fit_modified_poisson(df: pd.DataFrame, outcome: str, exposure: str, weights: str, adjust: List[str]):
     rhs = " + ".join([exposure] + adjust)
     formula = f"{outcome} ~ {rhs}"
@@ -543,7 +553,7 @@ def standardized_riskdiff_mi(mi_list: List[pd.DataFrame],
                              delta: float = 1.0) -> Tuple[float, float, float]:
     """
     Using g-computation from Poisson(log) model,
-    calculate adjusted risk difference (percentage points) and 95%CI 
+    calculate adjusted risk difference (in % points) and 95%CI
     when HI_z_22 is increased by +delta, pooled using Rubin's rules.
 
     Returns: (aRD_pctpt, LCL_pctpt, UCL_pctpt)
@@ -584,14 +594,14 @@ def standardized_riskdiff_mi(mi_list: List[pd.DataFrame],
         x = df[exposure].values
         Z = df[adjust].values if len(adjust) > 0 else np.zeros((len(df), 0))
 
-        # Adjustment coefficient vector (ordered by adjust)
+        # Adjustment coefficient vector (order follows adjust)
         bZ = np.array([params[a] for a in adjust]) if len(adjust) > 0 else np.array([])
 
         eta0 = b0 + bx * x + (Z @ bZ if Z.size > 0 else 0.0)
         mu0 = np.exp(eta0)
         mu1 = np.exp(eta0 + bx * delta)  # Only change x -> x+delta
 
-        # Clip predicted values to [0,1] (safety measure for Poisson properties)
+        # Clip predictions to [0,1] (safety for Poisson properties)
         mu0 = np.clip(mu0, 0, 1)
         mu1 = np.clip(mu1, 0, 1)
 
@@ -601,7 +611,7 @@ def standardized_riskdiff_mi(mi_list: List[pd.DataFrame],
         # RD (probability difference)
         rd = float(np.sum(w * (mu1 - mu0)) / sumw)  # Proportion
         # Gradient g = (1/sumw) * Σ w*(μ1 X1 - μ0 X0)
-        # X is [1, x, Z...], but only 2nd column of X1 is (x+delta)
+        # X is [1, x, Z...], but X1's 2nd column is (x+delta)
         diff = (mu1 - mu0)
 
         g_map = {}
@@ -668,39 +678,91 @@ class CausalDiscoveryCV:
         self.device = device
 
     def _prepare(self, df: pd.DataFrame, subset="all") -> Tuple[np.ndarray, List[str]]:
+        # Baseline variables (2021)
         det21 = ["male","low_edu","lack_social_support","current_smoking","no_health_checkup",
                  "low_income","living_alone","age","poor_self_rated_health",
                  "heavy_drinking","low_physical_activity","bmi"]
+        
+        # Exposure variable (2022)
         hi22 = ["HI_sum_22"] if self.hi_var_type=="continuous" else ["High_HI_22"]
-        dis23 = ["HospitalizationPastYear_23","COVID19_Infection_23",
-                 "COVID19_Vaccination_23","InfluenzaVaccination_23"]
-        chronic23 = ["Hypertension_23","Diabetes_23","Dyslipidemia_23","Depression_23"]
-        sym23 = ["Fever_23","Dyspnea_23","ChestPain_23","Fatigue_23"]
+        
+        # Outcome variables (2023)
+        # Disease/hospitalization/vaccine related (for Figure3)
+        disease_outcomes = [
+            "HospitalizationPastYear_23",
+            "COVID19_Infection_23",
+            "COVID19_Vaccination_23",
+            "InfluenzaVaccination_23",
+            "Hypertension_23",
+            "Diabetes_23",
+            "Dyslipidemia_23",
+            "Asthma_23",
+            "Periodontitis_23",
+            "DentalCaries_23",
+            "AnginaMI_23",
+            "Stroke_23",
+            "COPD_23",
+            "CKD_23",
+            "ChronicLiverDisease_23",
+            "Cancer_23",
+            "ChronicPain_23",
+            "Depression_23"
+        ]
+        
+        # Symptom related (for Supplementary Figure2)
+        symptom_outcomes = [
+            "GIDiscomfort_23",
+            "BackPain_23",
+            "JointPain_23",
+            "Headache_23",
+            "ChestPain_23",
+            "Dyspnea_23",
+            "Dizziness_23",
+            "SleepDisturbance_23",
+            "MemoryDisorder_23",
+            "ConcentrationDecline_23",
+            "ReducedLibido_23",
+            "Fatigue_23",
+            "Cough_23",
+            "Fever_23"
+        ]
 
+        # Select variables according to subset
         if subset == "disease":
-            use = det21 + hi22 + dis23 + chronic23
+            use = det21 + hi22 + disease_outcomes
         elif subset == "symptoms":
-            use = det21 + hi22 + sym23
+            use = det21 + hi22 + symptom_outcomes
         else:
-            use = det21 + hi22 + dis23[:2] + chronic23[:2] + sym23[:2]
+            # Default (only representative variables)
+            use = det21 + hi22 + disease_outcomes[:4] + symptom_outcomes[:4]
 
+        # Use only variables that exist in dataframe
         use = [c for c in use if c in df.columns]
+        
+        # Remove missing values
         m = df[use].dropna()
         if m.empty:
+            logger.warning(f"[{subset}] No complete cases after removing NAs")
             return None, []
+        
+        logger.info(f"[{subset}] Using {len(use)} variables, {len(m)} complete cases")
 
+        # Set data type
         dtype = np.float64 if CAUSAL_PARAMS["CORL"]["use_float64"] else np.float32
         X = m.copy().astype(dtype)
+        
+        # Standardize continuous variables
         cont = [c for c in use if not set(pd.unique(m[c])).issubset({0,1})]
         if cont:
             sc = RobustScaler()
             X[cont] = sc.fit_transform(m[cont].values.astype(dtype)).astype(dtype)
+            logger.info(f"[{subset}] Standardized {len(cont)} continuous variables")
 
         return X.values.astype(dtype), use
 
     def _create_prior_knowledge(self, var_names: List[str], strictness: str = "moderate") -> np.ndarray:
         """
-        Create prior knowledge matrix for DirectLiNGAM (staged constraints)
+        Create prior knowledge matrix for DirectLiNGAM (stepwise constraints)
         prior_knowledge[i,j] = 1 means "prohibit j→i"
         
         strictness:
@@ -724,30 +786,30 @@ class CausalDiscoveryCV:
             else:
                 vars_2021.append(i)
         
-        # Temporal constraints: Prohibit future→past (applied at all levels)
-        # Prohibit causation from 2023 to 2021/2022
+        # Temporal constraints: prohibit future→past (applied at all levels)
+        # Prohibit causality from 2023 to 2021/2022
         for i in vars_2021 + vars_2022:
             for j in vars_2023:
                 prior_knowledge[i, j] = 1
         
-        # Prohibit causation from 2022 to 2021
+        # Prohibit causality from 2022 to 2021
         for i in vars_2021:
             for j in vars_2022:
                 prior_knowledge[i, j] = 1
         
         if strictness in ["moderate", "strict"]:
-            # Prohibit causation to most important immutable variables (male, age)
+            # Prohibit causality to most critical immutable variables (male, age)
             critical_immutable = ["male", "age"]
             for target_var in critical_immutable:
                 if target_var in var_names:
                     target_idx = var_names.index(target_var)
-                    # Prohibit causation from other variables in same year to immutable variables
+                    # Prohibit causality from other variables in same year to immutable variables
                     for source_idx in vars_2021:
                         if source_idx != target_idx:
                             prior_knowledge[target_idx, source_idx] = 1
         
         if strictness == "strict":
-            # Also prohibit causation to low_edu
+            # Also prohibit causality to low_edu
             if "low_edu" in var_names:
                 edu_idx = var_names.index("low_edu")
                 for source_idx in vars_2021:
@@ -772,7 +834,9 @@ class CausalDiscoveryCV:
         (opposite meaning from prior_knowledge)
         """
         n_vars = len(var_names)
-        dag_mask = np.ones((n_vars, n_vars))
+        # Explicitly specify data type (float32 or float64)
+        dtype = np.float64 if CAUSAL_PARAMS["CORL"]["use_float64"] else np.float32
+        dag_mask = np.ones((n_vars, n_vars), dtype=dtype)
         
         # Classify variables by year
         vars_2021 = []
@@ -787,7 +851,7 @@ class CausalDiscoveryCV:
             else:
                 vars_2021.append(i)
         
-        # Temporal constraints: Prohibit future→past
+        # Temporal constraints: prohibit future→past
         for i in vars_2021 + vars_2022:
             for j in vars_2023:
                 dag_mask[i, j] = 0
@@ -796,7 +860,7 @@ class CausalDiscoveryCV:
             for j in vars_2022:
                 dag_mask[i, j] = 0
         
-        # Prohibit causation to immutable variables
+        # Prohibit causality to immutable variables
         immutable_vars = CAUSAL_PARAMS["GOLEM_CONSTRAINTS"]["immutable_vars"]
         for target_var in immutable_vars:
             if target_var in var_names:
@@ -808,27 +872,27 @@ class CausalDiscoveryCV:
         # Diagonal elements are 0 (prohibit self-loops)
         np.fill_diagonal(dag_mask, 0)
         
-        logger.info(f"CORL dag_mask: {n_vars}x{n_vars}, allowed edges: {int(np.sum(dag_mask))}")
+        logger.info(f"CORL dag_mask: {n_vars}x{n_vars}, allowed edges: {int(np.sum(dag_mask))}, dtype: {dag_mask.dtype}")
         
         return dag_mask
 
     def _create_B_init_for_golem(self, var_names: List[str], ev_result: np.ndarray = None) -> np.ndarray:
         """
-        Create initial value matrix for GOLEM (with constraints)
-        B_init[i,j] is the initial value of coefficient j→i
-        ev_result: EV stage result (if provided, use this as initial value)
+        Create initial value matrix for GOLEM (reflecting constraints)
+        B_init[i,j] is initial value of coefficient j→i
+        ev_result: EV stage result (if provided, use as initial value)
         """
         n_vars = len(var_names)
         
         if ev_result is not None:
-            # Use EV result as initial value
-            B_init = ev_result.copy()
+            # Use EV result as initial value - ensure float32
+            B_init = ev_result.copy().astype(np.float32)
         else:
             # Random initialization
             init_scale = CAUSAL_PARAMS.get("GOLEM_CONSTRAINTS", {}).get("init_scale", 0.05)
             B_init = np.random.randn(n_vars, n_vars).astype(np.float32) * init_scale
         
-        # Get constraint usage from settings
+        # Get constraint usage settings
         use_temporal = CAUSAL_PARAMS.get("GOLEM_CONSTRAINTS", {}).get("use_temporal", True)
         use_immutable = CAUSAL_PARAMS.get("GOLEM_CONSTRAINTS", {}).get("use_immutable", True)
         immutable_vars = CAUSAL_PARAMS.get("GOLEM_CONSTRAINTS", {}).get("immutable_vars", ["male", "age"])
@@ -846,31 +910,28 @@ class CausalDiscoveryCV:
             else:
                 vars_2021.append(i)
         
-        # Number of non-zero elements before applying constraints
+        # Count non-zero elements before applying constraints
         non_zero_before = np.sum(np.abs(B_init) > 1e-10)
         
         if use_temporal:
-            # Initialize temporal violation elements to 0
-            # 2023→2021/2022 to 0
             for i in vars_2021 + vars_2022:
                 for j in vars_2023:
-                    B_init[i, j] = 0
-            
-            # 2022→2021 to 0
-            for i in vars_2021:
-                for j in vars_2022:
-                    B_init[i, j] = 0
+                    B_init[i, j] = 0.0  # Use 0.0 instead of 0            
+                # Set 2022→2021 to 0
+                for i in vars_2021:
+                    for j in vars_2022:
+                        B_init[i, j] = 0.0
         
         if use_immutable:
-            # Causation to immutable variables to 0
+            # Set causality to immutable variables to 0
             for target_var in immutable_vars:
                 if target_var in var_names:
                     target_idx = var_names.index(target_var)
                     for source_idx in range(n_vars):
                         if source_idx != target_idx:
-                            B_init[target_idx, source_idx] = 0
+                            B_init[target_idx, source_idx] = 0.0
         
-        # Number of non-zero elements after applying constraints
+        # Count non-zero elements after applying constraints
         non_zero_after = np.sum(np.abs(B_init) > 1e-10)
         
         logger.info(f"GOLEM B_init: {n_vars}x{n_vars} matrix, "
@@ -889,9 +950,13 @@ class CausalDiscoveryCV:
                for k,c in counter.items() if c >= self.fold_threshold}
         return sig
 
-    def _filter_temporal(self, A: np.ndarray, names: List[str]) -> np.ndarray:
-        """Apply temporal constraints post-hoc (for safety)"""
-        out = A.copy()
+    def _filter_temporal_and_immutable(self, A: np.ndarray, names: List[str]) -> np.ndarray:
+        """
+        Apply temporal constraints and immutable variable constraints post-hoc
+        """
+        out = A.copy().astype(np.float32)
+        
+        # Apply temporal constraints
         idx21 = [i for i,n in enumerate(names) if not "_23" in n and n not in ["HI_sum_22","High_HI_22"]]
         idx22 = [i for i,n in enumerate(names) if n in ["HI_sum_22","High_HI_22"]]
         idx23 = [i for i,n in enumerate(names) if "_23" in n]
@@ -899,21 +964,39 @@ class CausalDiscoveryCV:
         # Remove 2023→2021/2022
         for i in idx21+idx22:
             for j in idx23:
-                out[i,j]=0
+                out[i,j] = 0.0
         
         # Remove 2022→2021
         for i in idx21:
             for j in idx22:
-                out[i,j]=0
+                out[i,j] = 0.0
         
-        np.fill_diagonal(out, 0)
+        # Forcibly remove causality to immutable variables (Age, Male, low_edu) 
+        # Add more constraints here if needed
+        immutable_vars = ["age", "male","low_edu"]
+        for var in immutable_vars:
+            if var in names:
+                var_idx = names.index(var)
+                # Set causality from all variables to immutable variable to 0
+                for source_idx in range(len(names)):
+                    if source_idx != var_idx:
+                        out[var_idx, source_idx] = 0.0
+        
+        # Set diagonal elements to 0 (prohibit self-loops)
+        np.fill_diagonal(out, 0.0)
+        
+        # Log output
+        removed_edges = np.sum((A != 0) & (out == 0))
+        if removed_edges > 0:
+            logger.debug(f"Post-processing removed {int(removed_edges)} edges (temporal + immutable constraints)")
+        
         return out
 
     def _run_directlingam(self, X, names) -> Dict[str,float]:
         if not GCASTLE_AVAILABLE:
             return {}
         
-        # Try in order of strongest to weakest constraints (strict→moderate→minimal)
+        # Try from strictest constraints (strict→moderate→minimal)
         for strictness in ["strict", "moderate", "minimal"]:
             try:
                 # Create prior knowledge matrix
@@ -925,8 +1008,8 @@ class CausalDiscoveryCV:
                 mdl = DirectLiNGAM(**params)
                 mdl.learn(X)
                 
-                # Apply temporal filtering post-hoc as well (for safety)
-                A = self._filter_temporal(mdl.causal_matrix, names)
+                # Apply temporal and immutable variable constraints post-hoc
+                A = self._filter_temporal_and_immutable(mdl.causal_matrix, names)
                 
                 edges={}
                 for i in range(len(names)):
@@ -940,14 +1023,14 @@ class CausalDiscoveryCV:
             except ValueError as ve:
                 if "argmax of an empty sequence" in str(ve):
                     logger.warning(f"DirectLiNGAM failed with {strictness} constraints: {ve}")
-                    continue  # Try next weaker constraint level
+                    continue
                 else:
                     raise ve
             except Exception as e:
                 logger.warning(f"DirectLiNGAM failed with {strictness} constraints: {e}")
                 continue
         
-        # If all constraint levels failed, run without constraints
+        # If failed at all constraint levels, run without constraints
         try:
             logger.info("DirectLiNGAM: trying without constraints")
             params = CAUSAL_PARAMS["DirectLiNGAM"].copy()
@@ -956,8 +1039,8 @@ class CausalDiscoveryCV:
             mdl = DirectLiNGAM(**params)
             mdl.learn(X)
             
-            # Apply temporal filtering post-hoc
-            A = self._filter_temporal(mdl.causal_matrix, names)
+            # Apply temporal and immutable variable constraints post-hoc
+            A = self._filter_temporal_and_immutable(mdl.causal_matrix, names)
             
             edges={}
             for i in range(len(names)):
@@ -973,11 +1056,12 @@ class CausalDiscoveryCV:
             return {}
 
     def _run_golem(self, X, names) -> Dict[str,float]:
-        """Improved version: Supports EV→NV two-stage execution"""
+        """Improved version: Support EV→NV two-stage execution + immutable variable constraints"""
         if not GCASTLE_AVAILABLE or not TORCH_AVAILABLE:
             return {}
         
         try:
+            X = X.astype(np.float32)
             use_two_stage = CAUSAL_PARAMS.get("GOLEM_CONSTRAINTS", {}).get("use_two_stage", False)
             
             if use_two_stage:
@@ -986,20 +1070,19 @@ class CausalDiscoveryCV:
                 params_ev = CAUSAL_PARAMS["GOLEM"].copy()
                 params_ev["device_type"] = "gpu" if torch.cuda.is_available() else "cpu"
                 params_ev["equal_variances"] = True
-                params_ev["lambda_1"] = 2e-2  # Recommended value for EV
-                params_ev["num_iter"] = min(params_ev["num_iter"], 50000)  # First stage can be shorter
+                params_ev["lambda_1"] = 2e-2
+                params_ev["num_iter"] = min(params_ev["num_iter"], 50000)
                 
-                # Initial value matrix (with constraints)
                 B_init_ev = self._create_B_init_for_golem(names)
                 params_ev["B_init"] = B_init_ev
                 
                 golem_ev = GOLEM(**params_ev)
                 golem_ev.learn(X)
                 
-                # Get EV result and apply constraints
-                ev_result = self._filter_temporal(golem_ev.causal_matrix, names)
+                # Apply constraints to EV result
+                ev_result = self._filter_temporal_and_immutable(golem_ev.causal_matrix, names)
                 
-                # Stage 2: Run NV (equal_variances=False) using EV result as initial value
+                # Stage 2: Run NV (equal_variances=False) with EV result as initial value
                 logger.info("GOLEM Stage 2: Running with equal_variances=False using EV result as init")
                 params_nv = CAUSAL_PARAMS["GOLEM"].copy()
                 params_nv["device_type"] = "gpu" if torch.cuda.is_available() else "cpu"
@@ -1009,8 +1092,8 @@ class CausalDiscoveryCV:
                 golem_nv = GOLEM(**params_nv)
                 golem_nv.learn(X)
                 
-                # Final result
-                A = self._filter_temporal(golem_nv.causal_matrix, names)
+                # Apply constraints to final result
+                A = self._filter_temporal_and_immutable(golem_nv.causal_matrix, names)
                 
             else:
                 # Single-stage execution (conventional method)
@@ -1022,7 +1105,8 @@ class CausalDiscoveryCV:
                 golem = GOLEM(**params)
                 golem.learn(X)
                 
-                A = self._filter_temporal(golem.causal_matrix, names)
+                # Apply constraints
+                A = self._filter_temporal_and_immutable(golem.causal_matrix, names)
             
             # Extract edges
             edges = {}
@@ -1040,7 +1124,7 @@ class CausalDiscoveryCV:
             return {}
 
     def _run_corl(self, X, names) -> Dict[str,float]:
-        """Improved version: Uses dag_mask"""
+        """Improved version: Use dag_mask + immutable variable constraints"""
         if not GCASTLE_AVAILABLE or not TORCH_AVAILABLE:
             return {}
         
@@ -1061,7 +1145,7 @@ class CausalDiscoveryCV:
             params = CAUSAL_PARAMS["CORL"].copy()
             params.pop("use_float64", None)
             params.pop("use_dag_mask", None)
-            params.pop("edge_threshold", None)  # Remove from parameters (added)
+            params.pop("edge_threshold", None)
             params["device_type"] = "gpu" if torch.cuda.is_available() else "cpu"
             
             n_samples, n_features = X.shape
@@ -1072,6 +1156,7 @@ class CausalDiscoveryCV:
             use_dag_mask = CAUSAL_PARAMS["CORL"].get("use_dag_mask", False)
             if use_dag_mask:
                 dag_mask = self._create_dag_mask_for_corl(names)
+                dag_mask = dag_mask.astype(dtype)
                 corl = CORL(**params)
                 corl.learn(X, dag_mask=dag_mask)
                 logger.info("CORL: Using dag_mask for constraints")
@@ -1079,14 +1164,15 @@ class CausalDiscoveryCV:
                 corl = CORL(**params)
                 corl.learn(X)
             
-            A = self._filter_temporal(corl.causal_matrix, names)
+            # Apply constraints
+            A = self._filter_temporal_and_immutable(corl.causal_matrix, names)
             
-            # Get edge extraction threshold from parameters (fixed)
+            # Edge extraction
             edge_threshold = CAUSAL_PARAMS["CORL"].get("edge_threshold", 1e-3)
             edges = {}
             for i in range(len(names)):
                 for j in range(len(names)):
-                    if i != j and abs(A[i,j]) > edge_threshold:  # Use parameter
+                    if i != j and abs(A[i,j]) > edge_threshold:
                         edges[f"{names[j]}→{names[i]}"] = float(A[i,j])
             
             logger.info(f"CORL found {len(edges)} edges {'(with dag_mask)' if use_dag_mask else ''} (threshold={edge_threshold})")
@@ -1097,7 +1183,7 @@ class CausalDiscoveryCV:
             return {}
 
     def _run_dagma(self, X, names) -> Dict[str,float]:
-        # DAGMA doesn't have direct prior knowledge setting, so only post-hoc filtering
+        """DAGMA execution + immutable variable constraints"""
         if not DAGMA_AVAILABLE or not TORCH_AVAILABLE:
             return {}
         try:
@@ -1107,13 +1193,15 @@ class CausalDiscoveryCV:
             eq_model = DagmaMLP(dims=params["dims"], bias=params["bias"])
             mdl = DagmaNonlinear(model=eq_model)
             W = mdl.fit(X.astype(np.float64),
-                       lambda1=params["lambda1"], lambda2=params["lambda2"],
-                       lr=params["lr"], w_threshold=params["w_threshold"],
-                       T=params["T"], mu_init=params["mu_init"],
-                       mu_factor=params["mu_factor"], s=params["s"],
-                       warm_iter=params["warm_iter"], max_iter=params["max_iter"],
-                       checkpoint=params["checkpoint"])
-            A = self._filter_temporal(W.T, names)
+                      lambda1=params["lambda1"], lambda2=params["lambda2"],
+                      lr=params["lr"], w_threshold=params["w_threshold"],
+                      T=params["T"], mu_init=params["mu_init"],
+                      mu_factor=params["mu_factor"], s=params["s"],
+                      warm_iter=params["warm_iter"], max_iter=params["max_iter"],
+                      checkpoint=params["checkpoint"])
+            
+            # Apply constraints
+            A = self._filter_temporal_and_immutable(W.T, names)
             
             # Apply w_threshold
             w_threshold = params.get("w_threshold", 0.3)
@@ -1131,11 +1219,18 @@ class CausalDiscoveryCV:
 
     def run(self, df: pd.DataFrame) -> pd.DataFrame:
         results = []
+        
+        # Save variable list used in each subset (added)
+        subset_variables = {}
+        
         for subset in ["disease","symptoms"]:
             X, names = self._prepare(df, subset=subset)
             if X is None:
                 logger.info(f"[{subset}] no data; skip")
                 continue
+            
+            # Record variables used in this subset (added)
+            subset_variables[subset] = names
             
             logger.info(f"[{subset}] Variables: {len(names)}, Samples: {X.shape[0]}")
             logger.info(f"[{subset}] Creating prior knowledge constraints...")
@@ -1156,10 +1251,16 @@ class CausalDiscoveryCV:
                 sig = self._cv_edges(edges_by_fold)
                 for k,v in sig.items():
                     results.append({"Path":k,"Method":mname,"Subset":subset,
-                                   "FoldCount":v["folds"],"Avg_Coefficient":v["coef"]})
+                                  "FoldCount":v["folds"],"Avg_Coefficient":v["coef"]})
+        
         if not results:
             return pd.DataFrame()
+        
         dfres = pd.DataFrame(results)
+        
+        # Add variable list for each subset (as metadata)
+        dfres.attrs['subset_variables'] = subset_variables
+        
         return dfres
 
 # ====== 13) Absolute Risk (Quartiles) ======
@@ -1228,7 +1329,7 @@ def plot_forest(results_df: pd.DataFrame, out_path: str):
     y = np.arange(len(df))
 
     plt.figure(figsize=(12, max(8, 0.35*len(df))))
-    # CUD color scheme: significant in blue, non-significant in gray
+    # CUD color scheme: significant is blue, non-significant is gray
     plt.hlines(y, lcl, ucl, colors=np.where(sig, "#0072B2", "#999999"), linewidth=2)
     colors = np.where(sig, "#0072B2", "#999999")
     plt.scatter(rr, y, s=60, c=colors, zorder=5)
@@ -1266,7 +1367,7 @@ def plot_forest(results_df: pd.DataFrame, out_path: str):
     plt.close()
     logger.info(f"Saved forest plot to {out_path}")
 
-# ====== 15) Spline (Fixed Version) ======
+# ====== 15) Spline (Revised Version) ======
 def plot_spline_hospitalization(panel: pd.DataFrame, wcol: str, out_path: str,
                                 df_spline: int = 3, x_min: int = 13, x_max: int = 52, x_ref: int = 29):
     dat = panel.dropna(subset=["HospitalizationPastYear_23","HI_sum_22", wcol] + COVARS).copy()
@@ -1312,12 +1413,12 @@ def plot_spline_hospitalization(panel: pd.DataFrame, wcol: str, out_path: str,
         UCL = np.exp(logRR + 1.96*se)
 
         plt.figure(figsize=(6,4))
-        plt.plot(xs, RR, label="aRR vs ref(HI=29)", linewidth=2, color="#0072B2")
+        plt.plot(xs, RR, label="aRR (vs median HI=29)", linewidth=2, color="#0072B2")
         plt.fill_between(xs, LCL, UCL, alpha=0.2, color="#0072B2")
-        plt.axhline(1.0, linestyle="--", alpha=0.5, linewidth=1, label="RR=1.0", color="#D55E00")
-        plt.axvline(x_ref, linestyle="--", alpha=0.5, label="Reference (29)", color="#009E73")
+        plt.axhline(1.0, linestyle="--", alpha=0.3, linewidth=1, label="aRR = 1.0", color="#D55E00")
+        plt.axvline(x_ref, linestyle="--", alpha=0.3, label="Reference (Median HI = 29)", color="#009E73")
         plt.xlabel("Health Indifference score (13–52)")
-        plt.ylabel("Adjusted Risk Ratio")
+        plt.ylabel("Adjusted Risk Ratio (aRR)")
         plt.title("Spline: Hospitalization vs Health Indifference")
         plt.legend()
         plt.grid(True, alpha=0.2)
@@ -1352,64 +1453,122 @@ def plot_spline_hospitalization(panel: pd.DataFrame, wcol: str, out_path: str,
         except Exception as e2:
             logger.warning(f"Even simplified plot failed: {e2}")
 
-# ====== 16) Network Visualization (Fixed Version: matplotlib error handling) ======
-def plot_causal_network(causal_df: pd.DataFrame, out_path: str):
-    if causal_df.empty:
-        logger.warning("No causal edges to plot")
+# ====== 16) Network Visualization ======
+def plot_causal_network(causal_df: pd.DataFrame, out_path: str, subset_name: str = None, all_variables: List[str] = None):
+    """
+    Visualize causal network (concise version: only 3 temporal groups)
+    """
+    # Continue processing even with empty DataFrame if all_variables is provided
+    if causal_df.empty and not all_variables:
+        logger.warning("No causal edges to plot and no variables provided")
         return
-
-    edge_methods = {}
-    for _, row in causal_df.iterrows():
-        path = row["Path"]
-        method = row["Method"]
-        if "→" in path:
-            src, tgt = path.split("→")
-            edge_key = (src.strip(), tgt.strip())
-            edge_methods.setdefault(edge_key, []).append(method)
-
+    
+    # Filter by subset
+    if subset_name and not causal_df.empty:
+        causal_df = causal_df[causal_df["Subset"] == subset_name].copy()
+    
+    # Initialize graph
     G = nx.DiGraph()
-    for edge_key, methods in edge_methods.items():
-        G.add_edge(edge_key[0], edge_key[1],
-                   methods=methods, n_methods=len(set(methods)))
-
-    if G.number_of_edges() == 0:
-        logger.warning("No edges in causal graph")
+    
+    # Add all variables as nodes
+    if all_variables:
+        for var in all_variables:
+            G.add_node(var)
+        logger.info(f"Added {len(all_variables)} nodes to graph for subset {subset_name}")
+    
+    # Add edges
+    edge_methods = {}
+    if not causal_df.empty:
+        for _, row in causal_df.iterrows():
+            path = row["Path"]
+            method = row["Method"]
+            if "→" in path:
+                src, tgt = path.split("→")
+                src, tgt = src.strip(), tgt.strip()
+                
+                if src not in G.nodes():
+                    G.add_node(src)
+                if tgt not in G.nodes():
+                    G.add_node(tgt)
+                
+                edge_key = (src, tgt)
+                edge_methods.setdefault(edge_key, []).append(method)
+        
+        for edge_key, methods in edge_methods.items():
+            G.add_edge(edge_key[0], edge_key[1],
+                       methods=methods, n_methods=len(set(methods)))
+    
+    if G.number_of_nodes() == 0:
+        logger.warning("No nodes in causal graph")
         return
-
-    # Dictionary to shorten variable names
+    
+    logger.info(f"Graph has {G.number_of_nodes()} nodes and {G.number_of_edges()} edges")
+    
+    # Identify isolated nodes
+    isolated_nodes = [node for node in G.nodes() if G.degree(node) == 0]
+    connected_nodes = [node for node in G.nodes() if G.degree(node) > 0]
+    
+    # Variable name mapping (concise version)
     name_map = {
-        # 2021 Baseline
+        # 2021 Baseline - Demographics
         "male": "Male",
-        "age": "Age", 
-        "low_edu": "Low\nEdu",
-        "low_income": "Low\nIncome",
-        "living_alone": "Living\nAlone",
-        "lack_social_support": "Lack\nSocial",
+        "age": "Age",
+        "low_edu": "Low education",
+        "low_income": "Low income",
+        "living_alone": "Live alone",
+        # 2021 Baseline - Social/Behavioral
+        "lack_social_support": "No social support",
         "current_smoking": "Smoking",
-        "heavy_drinking": "Heavy\nDrink",
-        "low_physical_activity": "Low\nPA",
-        "no_health_checkup": "No\nCheckup",
-        "poor_self_rated_health": "Poor\nSRH",
+        "heavy_drinking": "Heavy Drink",
+        "low_physical_activity": "Low physical activity",
+        "no_health_checkup": "No health checkup",
+        # 2021 Baseline - Health Status
+        "poor_self_rated_health": "Poor self rated health",
         "bmi": "BMI",
         # 2022 Exposure
-        "HI_sum_22": "HI\nScore",
-        "High_HI_22": "High\nHI",
-        # 2023 Outcomes  
-        "HospitalizationPastYear_23": "Hospital",
-        "COVID19_Infection_23": "COVID\nInfect",
-        "COVID19_Vaccination_23": "COVID\nVax",
-        "InfluenzaVaccination_23": "Flu\nVax",
-        "Hypertension_23": "HTN",
-        "Diabetes_23": "DM",
-        "Dyslipidemia_23": "Dyslipid",
-        "Depression_23": "Depress",
-        "Fever_23": "Fever",
+        "HI_sum_22": "Health indifference",
+        "High_HI_22": "High health indifference",
+        # 2023 Disease Outcomes  
+        "HospitalizationPastYear_23": "Hospitalization",
+        "COVID19_Infection_23": "COVID Infection",
+        "COVID19_Vaccination_23": "COVID Vaccination",
+        "InfluenzaVaccination_23": "Flu Vaccination",
+        "Hypertension_23": "Hypertension",
+        "Diabetes_23": "Diabetes mellitus",
+        "Dyslipidemia_23": "Dyslipidemia",
+        "Asthma_23": "Asthma",
+        "Periodontitis_23": "Periodontitis",
+        "DentalCaries_23": "Dental caries",
+        "AnginaMI_23": "Angina/Myocardial infarction",
+        "Stroke_23": "Stroke",
+        "COPD_23": "COPD",
+        "CKD_23": "Chronic kidney disease",
+        "ChronicLiverDisease_23": "Liver Disease",
+        "Cancer_23": "Cancer",
+        "ChronicPain_23": "Chronic pain",
+        "Depression_23": "Depression",
+        # 2023 Symptom Outcomes
+        "GIDiscomfort_23": "GI Discomfort",
+        "BackPain_23": "Back Pain",
+        "JointPain_23": "Joint Pain",
+        "Headache_23": "Headache",
+        "ChestPain_23": "Chest Pain",
         "Dyspnea_23": "Dyspnea",
-        "ChestPain_23": "Chest\nPain",
-        "Fatigue_23": "Fatigue"
+        "Dizziness_23": "Dizziness",
+        "SleepDisturbance_23": "Sleep disturbance",
+        "MemoryDisorder_23": "Memory disorder",
+        "ConcentrationDecline_23": "Concentration decline",
+        "ReducedLibido_23": "Low Libido",
+        "Fatigue_23": "Fatigue",
+        "Cough_23": "Cough",
+        "Fever_23": "Fever"
     }
 
-    nodes_2021, nodes_2022, nodes_2023 = [], [], []
+    # Classify nodes by year (simple version)
+    nodes_2021 = []
+    nodes_2022 = []
+    nodes_2023 = []
+    
     for node in G.nodes():
         if "_23" in node:
             nodes_2023.append(node)
@@ -1418,47 +1577,46 @@ def plot_causal_network(causal_df: pd.DataFrame, out_path: str):
         else:
             nodes_2021.append(node)
 
-    # Adjust node positions
+    # Layout calculation (simple version)
     pos = {}
-    y_spacing_2021 = 6.0
-    y_spacing_2023 = 6.0
+    spacing = 1.5  # Node spacing
     
-    for i, node in enumerate(nodes_2021):
-        pos[node] = (0, i * y_spacing_2021)
+    # 2021 variable placement
+    for i, node in enumerate(sorted(nodes_2021)):  # Sort alphabetically
+        pos[node] = (0, i * spacing)
     
-    y_center = (len(nodes_2021) * y_spacing_2021) / 2 - 0.5
-    for i, node in enumerate(nodes_2022):
-        pos[node] = (4, y_center + i * 1.5)
+    # 2022 (HI) placement (centered)
+    y_center = (len(nodes_2021) * spacing) / 2 if nodes_2021 else 0
+    for i, node in enumerate(sorted(nodes_2022)):
+        pos[node] = (5, y_center + i * spacing)
     
-    for i, node in enumerate(nodes_2023):
-        pos[node] = (8, i * y_spacing_2023)
+    # 2023 variable placement
+    for i, node in enumerate(sorted(nodes_2023)):
+        pos[node] = (10, i * spacing)
 
-    # Adjust figure size
-    fig_height = max(10, max(len(nodes_2021) * 0.8, len(nodes_2023) * 0.9))
-    fig = plt.figure(figsize=(14, fig_height))
+    # Dynamically adjust figure size
+    n_max = max(len(nodes_2021), len(nodes_2022), len(nodes_2023))
+    fig_height = max(12, n_max * 0.8)
+    fig_width = 16
     
-    # Main graph drawing area
+    fig = plt.figure(figsize=(fig_width, fig_height))
     ax = plt.axes([0.05, 0.05, 0.75, 0.9])
 
-    # CUD color scheme for nodes
+    # Node color settings (by year only)
     node_colors = []
     for node in G.nodes():
         if node in nodes_2021:
-            node_colors.append("#E8F4FD")
+            node_colors.append("#E8F4FD")  # Light blue
         elif node in nodes_2022:
-            node_colors.append("#FFF4E6")
-        else:
-            node_colors.append("#E8F6F3")
+            node_colors.append("#FFF4E6")  # Orange
+        else:  # 2023
+            node_colors.append("#E8F6F3")  # Mint green
 
-    # CUD color scheme
+    # Edge color map
     method_colors = {
-        4: "#000000",
-        3: "#D55E00",
-        2: "#E69F00",
-        "DirectLiNGAM": "#0072B2",
-        "GOLEM": "#009E73",
-        "DAGMA": "#CC79A7",
-        "CORL": "#56B4E9"
+        4: "#000000", 3: "#D55E00", 2: "#E69F00",
+        "DirectLiNGAM": "#0072B2", "GOLEM": "#009E73",
+        "DAGMA": "#CC79A7", "CORL": "#56B4E9"
     }
 
     # Draw edges
@@ -1474,36 +1632,71 @@ def plot_causal_network(causal_df: pd.DataFrame, out_path: str):
             edge_color = method_colors.get(methods[0] if methods else "unknown", "#666666")
 
         linestyle = '-' if is_hi_related else '--'
-        linewidth = 3.0 if is_hi_related else 1.0
+        linewidth = 2.5 if is_hi_related else 1.0
+        alpha = 0.7 if is_hi_related else 0.5
 
         nx.draw_networkx_edges(G, pos, [(u, v)],
                                edge_color=edge_color, style=linestyle,
-                               width=linewidth, alpha=0.8,
-                               arrows=True, arrowsize=15,
+                               width=linewidth, alpha=alpha,
+                               arrows=True, arrowsize=12,
                                connectionstyle="arc3,rad=0.1",
-                               min_target_margin=20, ax=ax)
+                               min_target_margin=15, ax=ax)
 
+    # Set node size
+    node_size = 1000 if n_max > 20 else 1200
+    
     # Draw nodes
-    nx.draw_networkx_nodes(G, pos, node_color=node_colors,
-                           node_size=2000, edgecolors='#333333', linewidths=1.5, ax=ax)
+    # Connected nodes
+    if connected_nodes:
+        connected_colors = [node_colors[list(G.nodes()).index(n)] for n in connected_nodes]
+        nx.draw_networkx_nodes(G, pos, nodelist=connected_nodes,
+                               node_color=connected_colors,
+                               node_size=node_size, 
+                               edgecolors='#333333', 
+                               linewidths=1.2, ax=ax)
+    
+    # Isolated nodes
+    if isolated_nodes:
+        isolated_colors = [node_colors[list(G.nodes()).index(n)] for n in isolated_nodes]
+        nx.draw_networkx_nodes(G, pos, nodelist=isolated_nodes,
+                               node_color=isolated_colors,
+                               node_size=node_size, 
+                               edgecolors='#999999', 
+                               linewidths=0.8, 
+                               alpha=0.4, ax=ax)
 
     # Draw labels
-    labels = {}
-    for node in G.nodes():
-        labels[node] = name_map.get(node, node.replace("_23", "").replace("_22", ""))
+    labels = {node: name_map.get(node, node.replace("_23", "").replace("_22", "")) 
+              for node in G.nodes()}
     
-    nx.draw_networkx_labels(G, pos, labels, font_size=9, font_weight='bold', ax=ax)
+    font_size = 7 if n_max > 20 else 8
+    
+    # Connected node labels
+    if connected_nodes:
+        connected_labels = {node: labels[node] for node in connected_nodes}
+        nx.draw_networkx_labels(G, pos, connected_labels, 
+                                font_size=font_size, 
+                                font_weight='bold', ax=ax)
+    
+    # Isolated node labels
+    if isolated_nodes:
+        for node in isolated_nodes:
+            x, y = pos[node]
+            ax.text(x, y, labels[node], 
+                   fontsize=font_size-1, 
+                   ha='center', va='center',
+                   alpha=0.5, fontweight='normal')
 
-    # Temporal labels
-    ax.text(0, -2, "2021 Baseline", fontsize=14, fontweight='bold', ha='center')
-    ax.text(4, -2, "2022 Exposure", fontsize=14, fontweight='bold', ha='center', color='#D55E00')
-    ax.text(8, -2, "2023 Outcomes", fontsize=14, fontweight='bold', ha='center')
+    # Time series labels
+    ax.text(0, -2, "2021 Baseline", fontsize=12, fontweight='bold', ha='center')
+    ax.text(5, -2, "2022 Exposure", fontsize=12, fontweight='bold', ha='center', color='#D55E00')
+    ax.text(10, -2, "2023 Outcomes", fontsize=12, fontweight='bold', ha='center')
 
-    # Vertical lines
-    ax.axvline(x=2, color='#999999', linestyle='--', alpha=0.3)
-    ax.axvline(x=6, color='#999999', linestyle='--', alpha=0.3)
+    # Vertical lines (time series dividers)
+    ax.axvline(x=2.5, color='#999999', linestyle='--', alpha=0.3)
+    ax.axvline(x=7.5, color='#999999', linestyle='--', alpha=0.3)
 
-    # Create legend (error fix: use only legend1)
+    # Legend
     legend_elements = [
         plt.Line2D([0], [0], color=method_colors[4], lw=2.5, label='4 methods'),
         plt.Line2D([0], [0], color=method_colors[3], lw=2.5, label='3 methods'),
@@ -1512,30 +1705,45 @@ def plot_causal_network(causal_df: pd.DataFrame, out_path: str):
         plt.Line2D([0], [0], color=method_colors["GOLEM"], lw=2.5, label='GOLEM'),
         plt.Line2D([0], [0], color=method_colors["DAGMA"], lw=2.5, label='DAGMA'),
         plt.Line2D([0], [0], color=method_colors["CORL"], lw=2.5, label='CORL'),
-        plt.Line2D([0], [0], color='#333333', lw=3, linestyle='-', label='HI-related'),
-        plt.Line2D([0], [0], color='#333333', lw=1, linestyle='--', label='Non-HI')
+        plt.Line2D([0], [0], color='#333333', lw=2.5, linestyle='-', label='HI-related'),
+        plt.Line2D([0], [0], color='#333333', lw=1, linestyle='--', label='Non-HI'),
+        plt.Line2D([0], [0], marker='o', color='w', markerfacecolor='#999999', 
+                   markersize=8, alpha=0.4, label='Isolated')
     ]
     
-    # Create only one legend (error fix)
     ax.legend(handles=legend_elements, loc='center left', 
-              bbox_to_anchor=(1.02, 0.5), fontsize=10,
+              bbox_to_anchor=(1.02, 0.5), fontsize=9,
               frameon=True, fancybox=True, shadow=True,
-              title="Edge Types", title_fontsize=11)
+              title="Edge Types", title_fontsize=10)
 
-    ax.set_title("Causal Network: Temporal Structure (Fold≥3) - Optimized", 
-                 fontsize=16, fontweight='bold', pad=20)
-    ax.axis('off')
+    # Title
+    if subset_name == "disease":
+        title = "Figure 3. Causal Network: Disease and Vaccination Outcomes"
+    elif subset_name == "symptoms":
+        title = "Supplementary Figure 2. Causal Network: Symptom Outcomes"
+    else:
+        title = "Causal Network: Temporal Structure"
     
-    # Adjust graph display range
-    ax.set_xlim(-1.5, 9.5)
-    y_min = min([p[1] for p in pos.values()]) - 2.5
-    y_max = max([p[1] for p in pos.values()]) + 1.5
+    subtitle = f"({G.number_of_nodes()} nodes: {len(connected_nodes)} connected, {len(isolated_nodes)} isolated | {G.number_of_edges()} edges)"
+    
+    ax.set_title(title, fontsize=14, fontweight='bold', pad=15)
+    ax.text(5, max([p[1] for p in pos.values()]) + 2 if pos else 0, subtitle, 
+            fontsize=10, ha='center', style='italic')
+    
+    ax.axis('off')
+    ax.set_xlim(-2, 12)
+    if pos:
+        y_min = min([p[1] for p in pos.values()]) - 3
+        y_max = max([p[1] for p in pos.values()]) + 3
+    else:
+        y_min, y_max = -3, 3
     ax.set_ylim(y_min, y_max)
 
     plt.tight_layout()
     plt.savefig(out_path, dpi=300, bbox_inches='tight')
     plt.close()
-    logger.info(f"Saved causal network to {out_path}")
+    
+    logger.info(f"Saved causal network ({subset_name}) to {out_path}")
 
 # ====== 17) Table 1 ======
 def summarize_table1(panel: pd.DataFrame, wcol: str) -> pd.DataFrame:
@@ -1699,7 +1907,7 @@ def sensitivity_stratified_analysis(mi_list: List[pd.DataFrame], outcome: str, w
                 continue
     return pd.DataFrame(results)
 
-# ====== 21) Stratified Forest ======
+# ====== 21) Stratified Forest Plot ======
 def plot_stratified_forest(stratified_results: Dict[str, pd.DataFrame], out_path: str):
     all_data = []
     for category, df in stratified_results.items():
@@ -1835,7 +2043,7 @@ def main():
                 "N_events": n_events,
                 "RR": rr, "LCL": lcl, "UCL": ucl, "p": p,
                 "beta_bar": info["beta_bar"], "se_bar": info["se_bar"],
-                # aRD (percentage points)
+                # aRD (% points)
                 "aRD": ard, "aRD_LCL": ard_lcl, "aRD_UCL": ard_ucl,
                 "AbsoluteRisk_pct": abs_risk
             })
@@ -1848,7 +2056,7 @@ def main():
         res.to_csv(os.path.join(OUT_DIR, "SupplementaryTable1_main_results.csv"), index=False)
         return
 
-    # Multiple comparisons (FDR)
+    # Multiple comparison (FDR)
     rej, qvals, _, _ = multipletests(res["p"].values, alpha=0.05, method="fdr_bh")
     res["FDR_reject"] = rej
     res["FDR_q"] = qvals
@@ -1859,12 +2067,12 @@ def main():
     # Create figure with conventional column names
     plot_forest(res, os.path.join(OUT_DIR, "Figure2_forest_main.png"))
 
-    # Format main table, column order, and names
+    # Format main table, column order, column names
     # Convert CI to string
     res["RR_CI_str"] = res.apply(lambda r: f"{r['LCL']:.2f}-{r['UCL']:.2f}", axis=1)
     res["aRD_CI_str"] = res.apply(lambda r: f"{r['aRD_LCL']:.2f}-{r['aRD_UCL']:.2f}", axis=1)
 
-    # Change to rRR column name and reorder (CSV has duplicate column names '95%CI(LCL-UCL)')
+    # Change to rRR column name and reorder (CSV will have duplicate column name '95%CI(LCL-UCL)')
     out_cols = [
         "Outcome","N_total","N_events",
         "RR","RR_CI_str",
@@ -1940,15 +2148,33 @@ def main():
                                os.path.join(OUT_DIR, "Figure4_spline.png"),
                                df_spline=3, x_min=13, x_max=52, x_ref=29)
 
-    logger.info("=== 9/9 Causal discovery (optimized) ===")
     if GCASTLE_AVAILABLE or DAGMA_AVAILABLE:
         cd = CausalDiscoveryCV(hi_var_type="continuous")
         causal_df = cd.run(panel)
+        
+        # Get subset variable list
+        subset_variables = getattr(causal_df, 'attrs', {}).get('subset_variables', {})
+        
         if not causal_df.empty:
             causal_df.to_csv(os.path.join(OUT_DIR, "SupplementaryTable6_causal_edges.csv"), index=False)
-            plot_causal_network(causal_df, os.path.join(OUT_DIR, "Figure3_causal_network.png"))
-        else:
-            logger.warning("No causal edges found")
+        
+        # Check number of edges for each subset
+        disease_edges = causal_df[causal_df["Subset"] == "disease"] if not causal_df.empty else pd.DataFrame()
+        symptom_edges = causal_df[causal_df["Subset"] == "symptoms"] if not causal_df.empty else pd.DataFrame()
+        logger.info(f"Disease subset: {len(disease_edges)} edges found")
+        logger.info(f"Symptoms subset: {len(symptom_edges)} edges found")
+        
+        # Disease+Vaccination DAG (Figure 3)
+        plot_causal_network(causal_df, 
+                          os.path.join(OUT_DIR, "Figure3_causal_network_disease.png"),
+                          subset_name="disease",
+                          all_variables=subset_variables.get("disease", []))
+        
+        # Symptoms DAG (Supplementary Figure 2)
+        plot_causal_network(causal_df,
+                          os.path.join(OUT_DIR, "SupplementaryFigure1_causal_network_symptoms.png"),
+                          subset_name="symptoms",
+                          all_variables=subset_variables.get("symptoms", []))
     else:
         logger.warning("Causal discovery libraries not available")
 
@@ -1957,7 +2183,7 @@ def main():
     logger.info("Main Manuscript:")
     logger.info("  - Table1_characteristics.csv")
     logger.info("  - Figure2_forest_main.png")
-    logger.info("  - Figure3_causal_network.png (optimized)")
+    logger.info("  - Figure3_causal_network_disease.png (Disease & Vaccination outcomes)")
     logger.info("  - Figure4_spline.png")
     logger.info("Supplementary Materials:")
     logger.info("  - SupplementaryTable1_main_results.csv  [rRR & aRD integrated]")
@@ -1966,6 +2192,7 @@ def main():
     logger.info("  - SupplementaryTable4_stratified.csv")
     logger.info("  - SupplementaryTable5_absolute_risk.csv")
     logger.info("  - SupplementaryTable6_causal_edges.csv")
+    logger.info("  - SupplementaryFigure2_causal_network_symptoms.png (Symptom outcomes)")
     logger.info("=" * 60)
 
 if __name__ == "__main__":
