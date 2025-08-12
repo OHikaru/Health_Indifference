@@ -1745,47 +1745,266 @@ def plot_causal_network(causal_df: pd.DataFrame, out_path: str, subset_name: str
     
     logger.info(f"Saved causal network ({subset_name}) to {out_path}")
 
-# ====== 17) Table 1 ======
+# ====== 17) Table 1 (Complete version with all variables) ======
 def summarize_table1(panel: pd.DataFrame, wcol: str) -> pd.DataFrame:
+    """
+    Create Table 1 with All participants, Low HI, and High HI groups
+    Maintains compatibility with original code structure
+    """
     tbl = []
-    def add_row(cat, name, value):
-        tbl.append({"Category": cat, "Variable": name, "Value": value})
-
+    
+    def add_row(variable, all_value, low_value, high_value, smd, pvalue):
+        """Add a row to the table with all groups"""
+        tbl.append({
+            "Variable": variable,
+            "All participants": all_value,
+            "Low HI": low_value,
+            "High HI": high_value,
+            "SMD": smd,
+            "p-value": pvalue
+        })
+    
+    # Create HI_category (split by median)
+    if "High_HI_22" not in panel.columns:
+        # Split by median of HI_sum_22
+        if "HI_sum_22" in panel.columns:
+            median_hi = panel["HI_sum_22"].median()
+            panel["HI_category"] = pd.cut(panel["HI_sum_22"], 
+                                         bins=[-np.inf, median_hi, np.inf],
+                                         labels=["Low HI", "High HI"])
+            logger.info(f"Created HI_category using median HI score: {median_hi:.1f}")
+        else:
+            logger.error("HI_sum_22 not found, cannot create HI_category")
+            return pd.DataFrame(tbl)
+    else:
+        # Create from High_HI_22
+        panel["HI_category"] = panel["High_HI_22"].apply(
+            lambda x: "High HI" if x == 1 else "Low HI"
+        )
+    
+    # Split into groups
     d = panel.copy()
-    d_q = d.dropna(subset=["HI_quartile_22", wcol]).copy()
-    d_q["HI_quartile_22"] = d_q["HI_quartile_22"].astype(int)
-
-    for var, lab in [("age","Age (mean±SD)"), ("bmi","BMI (mean±SD)")]:
-        sub = d.dropna(subset=[var, wcol])
-        if len(sub) > 0:
-            mu = np.average(sub[var], weights=sub[wcol])
-            sd = np.sqrt(np.average((sub[var]-mu)**2, weights=sub[wcol]))
-            add_row("Overall", lab, f"{mu:.1f} ± {sd:.1f}")
-            for q in [1,2,3,4]:
-                s = d_q[d_q["HI_quartile_22"]==q].dropna(subset=[var])
-                if len(s) > 0:
-                    muq = np.average(s[var], weights=s[wcol])
-                    sdq = np.sqrt(np.average((s[var]-muq)**2, weights=s[wcol]))
-                    add_row(f"Q{q}", lab, f"{muq:.1f} ± {sdq:.1f}")
+    d_all = d.dropna(subset=[wcol]).copy()
+    d_low = d[d["HI_category"] == "Low HI"].dropna(subset=[wcol]).copy()
+    d_high = d[d["HI_category"] == "High HI"].dropna(subset=[wcol]).copy()
+    
+    # Sample sizes
+    n_all = len(d_all)
+    n_low = len(d_low)
+    n_high = len(d_high)
+    
+    # Add header row with sample sizes
+    add_row(
+        "Characteristic",
+        f"(n={n_all:,})",
+        f"(n={n_low:,})",
+        f"(n={n_high:,})",
+        "",
+        ""
+    )
+    
+    # Define all variables with their labels and types
+    variables = [
+        # 2022 Health Indifference
+        ("HI_sum_22", "HI score (2022), mean±SD", "continuous"),
+        
+        # 2021 Baseline Demographics
+        ("age", "Age (2021), years, mean±SD", "continuous"),
+        ("male", "Male sex, n (%)", "binary"),
+        ("low_edu", "Low education (<HS), n (%)", "binary"),
+        ("low_income", "Low household income, n (%)", "binary"),
+        ("living_alone", "Living alone, n (%)", "binary"),
+        ("lack_social_support", "Lack of social support, n (%)", "binary"),
+        
+        # 2021 Health Behaviors
+        ("current_smoking", "Current smoking, n (%)", "binary"),
+        ("heavy_drinking", "Heavy drinking, n (%)", "binary"),
+        ("low_physical_activity", "Low physical activity, n (%)", "binary"),
+        ("no_health_checkup", "No health checkup, n (%)", "binary"),
+        
+        # 2021 Health Status
+        ("poor_self_rated_health", "Poor self-rated health, n (%)", "binary"),
+        ("bmi", "BMI (2021), kg/m², mean±SD", "continuous"),
+        
+        # 2023 Hospitalization and Vaccination
+        ("HospitalizationPastYear_23", "Hospitalization past year (2023), n (%)", "binary"),
+        ("COVID19_Infection_23", "COVID-19 infection (2023), n (%)", "binary"),
+        ("COVID19_Vaccination_23", "COVID-19 vaccination (2023), n (%)", "binary"),
+        ("InfluenzaVaccination_23", "Influenza vaccination (2023), n (%)", "binary"),
+        
+        # 2023 Chronic Diseases
+        ("Hypertension_23", "Hypertension (2023), n (%)", "binary"),
+        ("Diabetes_23", "Diabetes mellitus (2023), n (%)", "binary"),
+        ("Dyslipidemia_23", "Dyslipidemia (2023), n (%)", "binary"),
+        ("Asthma_23", "Asthma (2023), n (%)", "binary"),
+        ("Periodontitis_23", "Periodontitis (2023), n (%)", "binary"),
+        ("DentalCaries_23", "Dental caries (2023), n (%)", "binary"),
+        ("AnginaMI_23", "Angina/MI (2023), n (%)", "binary"),
+        ("Stroke_23", "Stroke (2023), n (%)", "binary"),
+        ("COPD_23", "COPD (2023), n (%)", "binary"),
+        ("CKD_23", "Chronic kidney disease (2023), n (%)", "binary"),
+        ("ChronicLiverDisease_23", "Chronic liver disease (2023), n (%)", "binary"),
+        ("Cancer_23", "Cancer (2023), n (%)", "binary"),
+        ("ChronicPain_23", "Chronic pain (2023), n (%)", "binary"),
+        ("Depression_23", "Depression (2023), n (%)", "binary"),
+        
+        # 2023 Symptoms
+        ("GIDiscomfort_23", "GI discomfort (2023), n (%)", "binary"),
+        ("BackPain_23", "Back pain (2023), n (%)", "binary"),
+        ("JointPain_23", "Joint pain (2023), n (%)", "binary"),
+        ("Headache_23", "Headache (2023), n (%)", "binary"),
+        ("ChestPain_23", "Chest pain (2023), n (%)", "binary"),
+        ("Dyspnea_23", "Dyspnea (2023), n (%)", "binary"),
+        ("Dizziness_23", "Dizziness (2023), n (%)", "binary"),
+        ("SleepDisturbance_23", "Sleep disturbance (2023), n (%)", "binary"),
+        ("MemoryDisorder_23", "Memory disorder (2023), n (%)", "binary"),
+        ("ConcentrationDecline_23", "Concentration decline (2023), n (%)", "binary"),
+        ("ReducedLibido_23", "Reduced libido (2023), n (%)", "binary"),
+        ("Fatigue_23", "Fatigue (2023), n (%)", "binary"),
+        ("Cough_23", "Cough (2023), n (%)", "binary"),
+        ("Fever_23", "Fever (2023), n (%)", "binary"),
+    ]
+    
+    # Process each variable
+    for var, label, var_type in variables:
+        if var not in panel.columns:
+            # Variable not found, add NA row
+            add_row(label, "NA", "NA", "NA", "NA", "NA")
+            continue
+        
+        if var_type == "continuous":
+            # Process continuous variables
+            
+            # All participants
+            sub_all = d_all.dropna(subset=[var])
+            if len(sub_all) > 0:
+                mu_all = np.average(sub_all[var], weights=sub_all[wcol])
+                var_all = np.average((sub_all[var] - mu_all)**2, weights=sub_all[wcol])
+                sd_all = np.sqrt(var_all)
+                all_value = f"{mu_all:.1f} ± {sd_all:.1f}"
+            else:
+                all_value = "NA"
+            
+            # Low HI
+            sub_low = d_low.dropna(subset=[var])
+            if len(sub_low) > 0:
+                mu_low = np.average(sub_low[var], weights=sub_low[wcol])
+                var_low = np.average((sub_low[var] - mu_low)**2, weights=sub_low[wcol])
+                sd_low = np.sqrt(var_low)
+                low_value = f"{mu_low:.1f} ± {sd_low:.1f}"
+            else:
+                low_value = "NA"
+            
+            # High HI
+            sub_high = d_high.dropna(subset=[var])
+            if len(sub_high) > 0:
+                mu_high = np.average(sub_high[var], weights=sub_high[wcol])
+                var_high = np.average((sub_high[var] - mu_high)**2, weights=sub_high[wcol])
+                sd_high = np.sqrt(var_high)
+                high_value = f"{mu_high:.1f} ± {sd_high:.1f}"
+            else:
+                high_value = "NA"
+            
+            # Calculate p-value (t-test)
+            if len(sub_low) > 0 and len(sub_high) > 0:
+                from scipy import stats
+                _, p_value = stats.ttest_ind(sub_low[var], sub_high[var])
+            else:
+                p_value = np.nan
+            
+            # Calculate SMD
+            if len(sub_low) > 0 and len(sub_high) > 0:
+                pooled_sd = np.sqrt(((len(sub_low)-1)*var_low + (len(sub_high)-1)*var_high) / 
+                                   (len(sub_low) + len(sub_high) - 2))
+                if pooled_sd > 0:
+                    smd = abs(mu_high - mu_low) / pooled_sd
                 else:
-                    add_row(f"Q{q}", lab, "NA")
-
-    bin_vars = ["male","low_edu","low_income","living_alone","lack_social_support",
-                "current_smoking","heavy_drinking","low_physical_activity",
-                "no_health_checkup","poor_self_rated_health"]
-    for var in bin_vars:
-        sub = d.dropna(subset=[var, wcol])
-        if len(sub) > 0:
-            p = np.average(sub[var], weights=sub[wcol])
-            add_row("Overall", f"{var} (%)", f"{p*100:.1f}")
-            for q in [1,2,3,4]:
-                s = d_q[d_q["HI_quartile_22"]==q].dropna(subset=[var])
-                if len(s) > 0:
-                    pq = np.average(s[var], weights=s[wcol])
-                    add_row(f"Q{q}", f"{var} (%)", f"{pq*100:.1f}")
+                    smd = 0
+            else:
+                smd = np.nan
+            
+        else:  # binary
+            # Process binary variables
+            
+            # All participants
+            sub_all = d_all.dropna(subset=[var])
+            if len(sub_all) > 0:
+                p_all = np.average(sub_all[var], weights=sub_all[wcol])
+                n_all_events = int(sub_all[var].sum())
+                all_value = f"{n_all_events:,} ({p_all*100:.1f})"
+            else:
+                all_value = "NA"
+            
+            # Low HI
+            sub_low = d_low.dropna(subset=[var])
+            if len(sub_low) > 0:
+                p_low = np.average(sub_low[var], weights=sub_low[wcol])
+                n_low_events = int(sub_low[var].sum())
+                low_value = f"{n_low_events:,} ({p_low*100:.1f})"
+            else:
+                low_value = "NA"
+                p_low = None
+            
+            # High HI
+            sub_high = d_high.dropna(subset=[var])
+            if len(sub_high) > 0:
+                p_high = np.average(sub_high[var], weights=sub_high[wcol])
+                n_high_events = int(sub_high[var].sum())
+                high_value = f"{n_high_events:,} ({p_high*100:.1f})"
+            else:
+                high_value = "NA"
+                p_high = None
+            
+            # Calculate p-value (chi-square or Fisher's exact test)
+            if len(sub_low) > 0 and len(sub_high) > 0:
+                n_low_yes = int(sub_low[var].sum())
+                n_low_no = len(sub_low) - n_low_yes
+                n_high_yes = int(sub_high[var].sum())
+                n_high_no = len(sub_high) - n_high_yes
+                
+                contingency = np.array([[n_low_yes, n_low_no],
+                                       [n_high_yes, n_high_no]])
+                
+                # Use Fisher's exact test for small samples
+                if np.min(contingency) < 5:
+                    from scipy.stats import fisher_exact
+                    _, p_value = fisher_exact(contingency)
                 else:
-                    add_row(f"Q{q}", f"{var} (%)", "NA")
-
+                    from scipy.stats import chi2_contingency
+                    _, p_value, _, _ = chi2_contingency(contingency)
+            else:
+                p_value = np.nan
+            
+            # Calculate SMD for binary variables
+            if p_low is not None and p_high is not None:
+                pooled_p = (p_low + p_high) / 2
+                if pooled_p > 0 and pooled_p < 1:
+                    smd = abs(p_high - p_low) / np.sqrt(pooled_p * (1 - pooled_p))
+                else:
+                    smd = 0
+            else:
+                smd = np.nan
+        
+        # Format p-value
+        if np.isnan(p_value):
+            p_str = "NA"
+        elif p_value < 0.001:
+            p_str = "<0.001"
+        else:
+            p_str = f"{p_value:.3f}"
+        
+        # Format SMD
+        if np.isnan(smd):
+            smd_str = "NA"
+        else:
+            smd_str = f"{smd:.3f}"
+        
+        # Add row to table
+        add_row(label, all_value, low_value, high_value, smd_str, p_str)
+    
+    # Log summary statistics
+    logger.info(f"Table 1 created with {len(tbl)-1} variables (excluding header)")
+    
     return pd.DataFrame(tbl)
 
 # ====== 18) Sensitivity Analysis (Quartiles) ======
