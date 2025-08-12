@@ -24,12 +24,12 @@ Core packages (automatically checked at runtime):
 
 **Data Structure**
 
-Place the following CSV files in your Google Drive folder:
+Place the following CSV files in your folder:
 * `2021_row.csv`: Baseline covariates
 * `2022_row.csv`: Health Indifference exposure
 * `2023_row.csv`: Health outcomes
 
-Update the `DRIVE_FOLDER` path in the script to point to your Google Drive location.
+Update the `DRIVE_FOLDER` path in the script to point to your location.
 
 **Usage**
 
@@ -39,12 +39,11 @@ python jastis_hi_analysis.py
 ```
 
 The script automatically:
-1. Mounts Google Drive (if in Colab)
-2. Loads and merges 3-year panel data
-3. Calculates IPCW weights
-4. Performs multiple imputation (m=5)
-5. Runs primary and sensitivity analyses
-6. Generates all figures and tables
+1. Loads and merges 3-year panel data
+2. Calculates IPCW weights
+3. Performs multiple imputation (m=5-10)
+4. Runs primary and sensitivity analyses
+5. Generates all figures and tables
 
 **Hyperparameter Configuration**
 
@@ -81,9 +80,6 @@ The script includes optimized hyperparameters for causal discovery algorithms:
 **Performance Considerations**
 
 * GPU recommended for GOLEM and CORL algorithms
-* Approximate runtime: 10-20 minutes per fold for GOLEM, 20 minutes per fold for DAGMA
-* DirectLiNGAM executes instantly
-* Total analysis time: 1-2 hours with full causal discovery
 
 **License**
 
