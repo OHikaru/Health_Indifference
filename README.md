@@ -1,43 +1,94 @@
-# Health Indifference Analysis
+**JASTIS Health Indifference Analysis**
 
-This repository hosts the analysis script used in the Health Indifference (HI) study of the JASTIS dataset. `health-indifference-analysis.py` provides a pipeline that executes data preprocessing, causal inference, and figure generation.
+This repository contains the analysis script for investigating health indifference and its association with health outcomes using the JASTIS (Japan Society and New Integrated Survey) longitudinal dataset. The script implements a comprehensive epidemiological analysis pipeline with causal discovery methods.
 
-## Key Features
-- Data integrity checks and memory optimization
-- Calculation of the Health Indifference score, including Cronbach's alpha
-- Variable creation according to the study protocol
-- Missing data imputation via multiple imputation by chained equations (MICE)
-- Statistical tests using t-test, Brunner–Munzel test, and chi-square test to generate Tables 1–3
-- Causal inference integrating CORL, DirectLiNGAM, GOLEM, and DAGMA (optional 5-fold cross-validation)
-- Automatic saving of results and figures locally and, when available, to Google Drive
+**Key Features**
 
-## Dependencies
-The script automatically installs required packages at runtime. Key dependencies include:
+* **Data Processing**: Automated loading of 3-year panel data (2021-2023) with encoding detection and column name flexibility
+* **Health Indifference Score**: Calculation of 13-item HI score with reverse coding, z-standardization, and quartile categorization
+* **IPCW Weighting**: Inverse Probability of Censoring Weighting with stabilization to handle attrition bias
+* **Multiple Imputation**: MICE (Multiple Imputation by Chained Equations) for missing covariate data with Rubin's rules for pooling
+* **Primary Analysis**: Modified Poisson regression with robust standard errors for risk ratios and standardized risk differences (aRD)
+* **Causal Discovery**: Integration of DirectLiNGAM, GOLEM (with EV→NV two-stage execution), CORL (with DAG masks), and DAGMA algorithms
+* **Sensitivity Analyses**: Quartile comparisons, interaction tests, and stratified analyses
+* **Visualization**: Forest plots, spline curves, and temporal causal networks with CUD-compliant color schemes
 
-- numpy, pandas, matplotlib, seaborn
-- scikit-learn, statsmodels, scipy, tqdm, openpyxl, missingno, joblib, networkx, torch
-- gcastle, dagma
+**Dependencies**
 
-## Data Preparation
-Prepare a longitudinal CSV file containing variables such as `UserID`, `Age_21`, `HealthOrientationScore_22`, etc. The file path is specified when running the script.
+Core packages (automatically checked at runtime):
+* `numpy`, `pandas`, `matplotlib`, `scipy`, `statsmodels`
+* `scikit-learn`, `patsy`, `networkx`
+* `torch` (optional, for neural causal methods)
+* `castle` (optional, for gCastle algorithms)
+* `dagma` (optional, for DAGMA algorithm)
 
-## Usage
-```bash
-python health-indifference-analysis.py --hi_var_type continuous --use_cv
+**Data Structure**
+
+Place the following CSV files in your Google Drive folder:
+* `2021_row.csv`: Baseline covariates
+* `2022_row.csv`: Health Indifference exposure
+* `2023_row.csv`: Health outcomes
+
+Update the `DRIVE_FOLDER` path in the script to point to your Google Drive location.
+
+**Usage**
+
+```python
+# Run in Google Colab or local environment
+python jastis_hi_analysis.py
 ```
-- `--hi_var_type`: `continuous` (HI score) or `binary` (High_HI)
-- `--use_cv`: Enable 5-fold cross-validation for causal inference
 
-Given the heavy computational load, running on a GPU environment is recommended.
+The script automatically:
+1. Mounts Google Drive (if in Colab)
+2. Loads and merges 3-year panel data
+3. Calculates IPCW weights
+4. Performs multiple imputation (m=5)
+5. Runs primary and sensitivity analyses
+6. Generates all figures and tables
 
-## Outputs
-The script generates the following tables and figures:
-- Table 1: Participant characteristics by Health Indifference
-- Table 2: Determinants of Health Indifference (mutually adjusted model)
-- Table 3: Outcomes associated with Health Indifference
-- Causal inference figures, participant flowcharts, and forest plots
+**Hyperparameter Configuration**
 
-Generated files are saved locally and, in Google Colab environments, automatically copied to Google Drive.
+The script includes optimized hyperparameters for causal discovery algorithms:
+* **DirectLiNGAM**: threshold=0.03, with temporal and immutable variable constraints
+* **GOLEM**: λ₁=2e-3, λ₂=5.0, 100k iterations, two-stage EV→NV execution
+* **CORL**: BIC scoring, transformer encoder, 1000 iterations with DAG mask constraints
+* **DAGMA**: warm-up 50k iterations, max 80k iterations, threshold=0.03
 
-## License
+**Outputs**
+
+**Main Manuscript Files:**
+* `Table1_characteristics.csv`: Baseline characteristics by HI quartile
+* `Figure2_forest_main.png`: Forest plot of adjusted risk ratios
+* `Figure3_causal_network_disease.png`: Causal network for disease outcomes
+* `Figure4_spline.png`: Spline curve for hospitalization risk
+
+**Supplementary Materials:**
+* `SupplementaryTable1_main_results.csv`: Complete results with rRR and aRD
+* `SupplementaryTable2_quartile_analysis.csv`: Quartile-based sensitivity analysis
+* `SupplementaryTable3_interaction.csv`: Effect modification tests
+* `SupplementaryTable5_absolute_risk.csv`: Absolute risks by quartile
+* `SupplementaryTable6_causal_edges.csv`: Causal edges from 5-fold CV
+* `SupplementaryFigure1_causal_network_symptoms.png`: Causal network for symptom outcomes
+
+**Statistical Methods**
+
+* **Primary Analysis**: Modified Poisson regression with log link and robust standard errors
+* **Weighting**: Stabilized IPCW with 1st/99th percentile trimming
+* **Multiple Comparisons**: FDR correction (Benjamini-Hochberg) and Bonferroni adjustment
+* **Causal Discovery**: 5-fold cross-validation with edge retention threshold ≥3 folds
+* **Risk Differences**: G-computation with delta method for variance estimation
+
+**Performance Considerations**
+
+* GPU recommended for GOLEM and CORL algorithms
+* Approximate runtime: 10-20 minutes per fold for GOLEM, 20 minutes per fold for DAGMA
+* DirectLiNGAM executes instantly
+* Total analysis time: 1-2 hours with full causal discovery
+
+**License**
+
 This project is licensed under the MIT License.
+
+**Citation**
+
+If you use this code, please cite the associated publication.
