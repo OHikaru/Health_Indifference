@@ -235,7 +235,7 @@ def build_covariates_2021(df21: pd.DataFrame) -> pd.DataFrame:
     smk_col = find_column(d, ["Q9", "q9"])
     if smk_col:
         out["current_smoking"] = pd.to_numeric(d[smk_col], errors="coerce").apply(
-            lambda x: 1 if x in [3,4] else (0 if pd.notna(x) else np.nan)
+            lambda x: 1 if x in [1,2] else (0 if pd.notna(x) else np.nan)
         )
     else:
         out["current_smoking"] = np.nan
